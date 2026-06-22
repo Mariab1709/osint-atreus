@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import * as dns from 'dns';
 import { DatabaseService } from '../database/database.service';
 
@@ -28,7 +28,7 @@ const BTC_ADDRESS_REGEX = /^(1|3|bc1)[a-zA-HJ-NP-Z0-9]{25,62}$/i;
 export class OsintService {
   private readonly logger = new Logger(OsintService.name);
 
-  constructor(private readonly dbService: DatabaseService) {}
+  constructor(@Inject(DatabaseService) private readonly dbService: DatabaseService) {}
 
   public async scan(query: string, userId?: string) {
     const sanitizedQuery = query.trim();

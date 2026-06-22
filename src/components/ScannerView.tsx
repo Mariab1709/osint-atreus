@@ -35,9 +35,22 @@ function GeoMap({ lat, lon, country, isp }: { lat?: number; lon?: number; countr
   ];
 
   const hasCoords = lat !== undefined && lon !== undefined;
-  // Mapear latitud y longitud a las dimensiones del SVG (500x250)
-  const x = hasCoords ? ((lon! + 180) / 360) * 500 : 250;
-  const y = hasCoords ? ((90 - lat!) / 180) * 250 : 125;
+  // Mapear latitud y longitud a las dimensiones del SVG (500x250) con calibración para el mapa manual
+  let x = 250;
+  let y = 125;
+  if (hasCoords) {
+    // Calibración de longitud (eje X)
+    if (lon! < 0) {
+      x = 1.6 * lon! + 225;
+    } else {
+      x = 1.45 * lon! + 230;
+    }
+    x = Math.max(10, Math.min(490, x));
+
+    // Calibración de latitud (eje Y)
+    y = -1.85 * lat! + 148;
+    y = Math.max(10, Math.min(240, y));
+  }
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
@@ -491,6 +504,12 @@ export default function ScannerView({
               <div className="flex items-center space-x-2 text-xs text-slate-400 pt-1">
                 <Globe className="w-4 h-4 text-slate-500" />
                 <span className="font-semibold">{riskProfile.country}</span>
+                {riskProfile.isp && riskProfile.isp !== 'Desconocido' && (
+                  <>
+                    <span className="text-slate-600">•</span>
+                    <span className="text-slate-400 font-medium">{riskProfile.isp}</span>
+                  </>
+                )}
               </div>
             </div>
 

@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException, Inject } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { DatabaseService } from '../database/database.service';
 
@@ -6,7 +6,7 @@ const TOKEN_EXPIRY = 24 * 60 * 60 * 1000; // 24 horas
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly dbService: DatabaseService) {}
+  constructor(@Inject(DatabaseService) private readonly dbService: DatabaseService) {}
 
   private hashPassword(password: string, salt: string): string {
     return crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');

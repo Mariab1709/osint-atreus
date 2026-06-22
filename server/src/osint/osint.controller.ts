@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Req, UseGuards, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Query, Req, UseGuards, BadRequestException, Inject } from '@nestjs/common';
 import { OsintService } from './osint.service';
 import { OptionalAuthGuard } from '../auth/auth.guard';
 
@@ -13,7 +13,7 @@ interface RequestWithUser extends Request {
 
 @Controller()
 export class OsintController {
-  constructor(private readonly osintService: OsintService) {}
+  constructor(@Inject(OsintService) private readonly osintService: OsintService) {}
 
   @Get('scan')
   @UseGuards(OptionalAuthGuard)

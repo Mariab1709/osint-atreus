@@ -9,7 +9,8 @@ import {
   Req, 
   UseGuards, 
   BadRequestException, 
-  NotFoundException 
+  NotFoundException,
+  Inject
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { StrictAuthGuard } from '../auth/auth.guard';
@@ -38,7 +39,7 @@ interface UpdateCaseDto {
 @Controller()
 @UseGuards(StrictAuthGuard) // Todo este controlador requiere autenticación estricta
 export class CasesController {
-  constructor(private readonly dbService: DatabaseService) {}
+  constructor(@Inject(DatabaseService) private readonly dbService: DatabaseService) {}
 
   /**
    * GET /api/cases

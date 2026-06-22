@@ -1,9 +1,9 @@
-import { Controller, Post, Get, Body, Headers, UnauthorizedException } from '@nestjs/common';
+import { Controller, Post, Get, Body, Headers, UnauthorizedException, Inject } from '@nestjs/common';
 import { AuthService } from './auth.service';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(@Inject(AuthService) private readonly authService: AuthService) {}
 
   @Post('register')
   async register(@Body() body: Record<string, string>) {
