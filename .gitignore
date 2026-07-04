@@ -1,4 +1,4 @@
-# Logs
+# === Logs ===
 logs
 *.log
 npm-debug.log*
@@ -7,20 +7,17 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# Dependencies
+# === Dependencies ===
 node_modules
 
-# Production / Build output
+# === Production / Build output ===
 dist
 dist-ssr
 server/dist
 server/tsconfig.tsbuildinfo
 *.tsbuildinfo
 
-# Local Database
-server/db.json
-
-# Environment variables / credentials
+# === Environment variables / credentials ===
 .env
 .env.local
 .env.development.local
@@ -28,7 +25,7 @@ server/db.json
 .env.production.local
 *.local
 
-# Editor directories and files
+# === Editor directories and files ===
 .vscode/*
 !.vscode/extensions.json
 .idea
@@ -38,3 +35,24 @@ server/db.json
 *.njsproj
 *.sln
 *.sw?
+
+# === SQLite database ===
+server/db.sqlite
+server/db.sqlite-journal
+server/db.sqlite-shm
+server/db.sqlite-wal
+
+# === OFAC cache ===
+server/ofac-cache.json
+
+# === Prisma ===
+prisma/migrations/migration_lock.toml
+
+# === NestJS / TypeScript build ===
+server/dist/
+server/build/
+*.js.map
+*.d.ts
+
+# === OS generated ===
+Thumbs.db

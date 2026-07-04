@@ -1,27 +1,39 @@
-import { Controller, Get, Query, Req, UseGuards, BadRequestException, Inject } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards, Request } from '@nestjs/common';
 import { OsintService } from './osint.service';
-import { OptionalAuthGuard } from '../auth/auth.guard';
+import { OptionalJwtGuard } from '../auth/optional-jwt.guard';
+import { PrismaService } from '../database/prisma.service';
 
-import { Request } from 'express';
-
-interface RequestWithUser extends Request {
-  user?: {
-    userId: string;
-    username: string;
-  };
-}
-
-@Controller()
+@Controller('scan')
 export class OsintController {
-  constructor(@Inject(OsintService) private readonly osintService: OsintService) {}
+  constructor(
+    private readonly osintService: OsintService,
+    private readonly prisma: PrismaService,
+  ) {}
 
-  @Get('scan')
-  @UseGuards(OptionalAuthGuard)
-  async scan(@Query('query') query: string, @Req() req: RequestWithUser) {
+  @Get()
+  @UseGuards(OptionalJwtGuard)
+  async scan(
+    @Query('query') query: string,
+    @Request() req: { user?: { id: string } },
+  ) {
     if (!query || !query.trim()) {
-      throw new BadRequestException('La consulta no puede estar vacía');
+      throw new Error('Query parameter is required');
     }
-    const userId = req.user?.userId;
-    return this.osintService.scan(query, userId);
+
+    const result = await this.osintService.scan(query);
+
+    if (req.user) {
+      await this.prisma.scan.create({
+        data: {
+          userId: req.user.id,
+          query: query.trim(),
+          entityType: result.riskProfile.entityTypeLabel,
+          riskScore: result.riskProfile.riskScore,
+          data: JSON.stringify(result),
+        },
+      });
+    }
+
+    return result;
   }
 }
