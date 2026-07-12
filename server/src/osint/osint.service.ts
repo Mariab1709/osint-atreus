@@ -1,588 +1,497 @@
-import { Injectable, Logger, Inject } from '@nestjs/common';
-import * as dns from 'dns';
-import { DatabaseService } from '../database/database.service';
+import { Injectable, Logger } from '@nestjs/common';
+import axios from 'axios';
+import * as dns from 'dns/promises';
+import { OfacService } from './ofac.service';
+import { BlockchainTagsService } from './blockchain-tags.service';
 
-const dnsPromises = dns.promises;
-
-interface IpApiResponse {
-  status: string;
-  country?: string;
-  countryCode?: string;
-  regionName?: string;
-  city?: string;
-  isp?: string;
-  org?: string;
-  as?: string;
-  query?: string;
-  message?: string;
+export interface RiskProfile {
+  entityName: string;
+  entityTypeLabel: string;
+  tags: { label: string; type: 'success' | 'danger' | 'warning' | 'info' }[];
+  country: string;
+  riskScore: number;
   lat?: number;
   lon?: number;
+  isp?: string;
 }
 
-const IPV4_REGEX = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/;
-const IPV6_REGEX = /^(?:[a-fA-F0-9]{1,4}:){7}[a-fA-F0-9]{1,4}$/;
-const ETH_ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
-const BTC_ADDRESS_REGEX = /^(1|3|bc1)[a-zA-HJ-NP-Z0-9]{25,62}$/i;
+export interface DigitalFootprintItem {
+  id: string;
+  domain: string;
+  status: 'Activo' | 'Inactivo' | 'Sospechoso';
+  registrationDate: string;
+  link: string;
+}
+
+export interface RelatedEntity {
+  id: string;
+  name: string;
+  role: string;
+  email: string;
+  avatarSeed: string;
+}
+
+export interface DigitalAssetItem {
+  id: string;
+  network: string;
+  address: string;
+  balance: string;
+  explorerLink: string;
+  transactions?: { hash: string; value: string; timestamp: string; type: 'IN' | 'OUT' }[];
+  tag?: string;
+  category?: string;
+}
+
+export interface ScanPayload {
+  riskProfile: RiskProfile;
+  digitalFootprint: DigitalFootprintItem[];
+  relatedEntities: RelatedEntity[];
+  digitalAssets: DigitalAssetItem[];
+  ofacAlertsCount: number;
+  ofacMatches?: string[];
+}
 
 @Injectable()
 export class OsintService {
   private readonly logger = new Logger(OsintService.name);
 
-  constructor(@Inject(DatabaseService) private readonly dbService: DatabaseService) {}
+  constructor(
+    private readonly ofacService: OfacService,
+    private readonly tagsService: BlockchainTagsService,
+  ) {}
 
-  public async scan(query: string, userId?: string) {
-    const sanitizedQuery = query.trim();
-    let data;
+  async scan(query: string): Promise<ScanPayload> {
+    const trimmed = query.trim();
 
-    // 1. Identificar si es una dirección IP
-    if (IPV4_REGEX.test(sanitizedQuery) || IPV6_REGEX.test(sanitizedQuery)) {
-      data = await this.handleIpScan(sanitizedQuery);
+    if (this.isIPv4(trimmed) || this.isIPv6(trimmed)) {
+      return this.scanIP(trimmed);
     }
-    // 2. Identificar si es una wallet crypto
-    else if (ETH_ADDRESS_REGEX.test(sanitizedQuery) || BTC_ADDRESS_REGEX.test(sanitizedQuery)) {
-      data = await this.handleCryptoScan(sanitizedQuery);
+    if (this.isEthereumAddress(trimmed)) {
+      return this.scanEthereum(trimmed);
     }
-    // 3. De lo contrario, tratarlo como dominio o host
-    else {
-      data = await this.handleDomainScan(sanitizedQuery);
+    if (this.isBitcoinAddress(trimmed)) {
+      return this.scanBitcoin(trimmed);
     }
-
-    // Guardar en el historial si hay usuario autenticado
-    if (userId && data) {
-      this.dbService.addScan(
-        userId,
-        sanitizedQuery,
-        data.riskProfile.entityTypeLabel,
-        data.riskProfile.riskScore,
-        data
-      );
-    }
-
-    return data;
+    return this.scanDomain(trimmed);
   }
 
-  private async handleIpScan(ip: string) {
+  private isIPv4(ip: string): boolean {
+    return /^(\d{1,3}\.){3}\d{1,3}$/.test(ip);
+  }
+
+  private isIPv6(ip: string): boolean {
+    return /^(?:[a-fA-F0-9]{1,4}:){7}[a-fA-F0-9]{1,4}$/.test(ip) ||
+           /^([0-9a-fA-F]{1,4}:){1,7}:$/.test(ip);
+  }
+
+  private isEthereumAddress(addr: string): boolean {
+    return /^0x[a-fA-F0-9]{40}$/.test(addr);
+  }
+
+  private isBitcoinAddress(addr: string): boolean {
+    return /^(1|3|bc1)[a-zA-HJ-NP-Z0-9]{25,62}$/.test(addr);
+  }
+
+  private async scanIP(ip: string): Promise<ScanPayload> {
     let country = 'Desconocido';
     let isp = 'Desconocido';
-    let org = 'Desconocido';
-    let hostname = '';
-    let riskScore = 15;
-    const tags: { label: string; type: 'success' | 'danger' | 'warning' | 'info' }[] = [
-      { label: 'Dirección IP', type: 'info' }
-    ];
     let lat: number | undefined;
     let lon: number | undefined;
+    let riskScore = 15;
+    const tags: RiskProfile['tags'] = [];
 
     try {
-      const geoResponse = await fetch(`http://ip-api.com/json/${ip}`);
-      if (geoResponse.ok) {
-        const geoData = (await geoResponse.json()) as IpApiResponse;
-        if (geoData.status === 'success') {
-          country = geoData.country || 'Desconocido';
-          isp = geoData.isp || 'Desconocido';
-          org = geoData.org || 'Desconocido';
-          lat = geoData.lat;
-          lon = geoData.lon;
+      const geoResponse = await axios.get(
+        `http://ip-api.com/json/${ip}?fields=status,message,country,countryCode,regionName,city,zip,lat,lon,timezone,isp,org,as,reverse,mobile,proxy,hosting`,
+        { timeout: 8000 }
+      );
+      const geoData = geoResponse.data;
 
-          const ispLower = isp.toLowerCase();
-          if (
-            ispLower.includes('amazon') ||
-            ispLower.includes('digitalocean') ||
-            ispLower.includes('google') ||
-            ispLower.includes('cloudflare') ||
-            ispLower.includes('ovh') ||
-            ispLower.includes('hosting')
-          ) {
-            tags.push({ label: 'Data Center / VPS', type: 'warning' });
-            riskScore += 25;
-          } else {
-            tags.push({ label: 'Residencial / ISP', type: 'success' });
-          }
+      if (geoData.status === 'success') {
+        country = geoData.country || 'Desconocido';
+        isp = geoData.isp || 'Desconocido';
+        lat = geoData.lat;
+        lon = geoData.lon;
+
+        if (geoData.hosting) {
+          riskScore += 25;
+          tags.push({ label: 'Hosting/Datacenter', type: 'danger' });
+        }
+        if (geoData.proxy) {
+          riskScore += 20;
+          tags.push({ label: 'Proxy/VPN Detectado', type: 'danger' });
+        }
+        if (geoData.mobile) {
+          riskScore += 5;
+          tags.push({ label: 'Conexión Móvil', type: 'info' });
+        }
+        if (!geoData.reverse) {
+          riskScore += 10;
+          tags.push({ label: 'Sin rDNS', type: 'warning' });
+        }
+        if (['RU', 'CN', 'KP', 'IR'].includes(geoData.countryCode)) {
+          riskScore += 25;
+          tags.push({ label: 'País de Alto Riesgo', type: 'danger' });
         }
       }
-    } catch (err) {
-      this.logger.warn('Fallo al geolocalizar IP:', err);
+    } catch (error: unknown) {
+      this.logger.warn(`Error consultando IP ${ip}:`, (error as Error).message);
     }
 
-    try {
-      const hostnames = await dnsPromises.reverse(ip);
-      if (hostnames && hostnames.length > 0) {
-        hostname = hostnames[0];
-        tags.push({ label: 'rDNS Configurado', type: 'success' });
-      }
-    } catch {
-      hostname = 'No asignado';
-      tags.push({ label: 'Sin rDNS', type: 'warning' });
-      riskScore += 10;
-    }
-
-    // Consulta RDAP para IP
-    let netName = '';
-    let ipRange = '';
-    try {
-      const rdapResponse = await fetch(`https://rdap.org/ip/${ip}`);
-      if (rdapResponse.ok) {
-        const rdapData = await rdapResponse.json() as any;
-        if (rdapData) {
-          netName = rdapData.name || rdapData.handle || '';
-          if (rdapData.startAddress && rdapData.endAddress) {
-            ipRange = `${rdapData.startAddress} - ${rdapData.endAddress}`;
-          }
-        }
-      }
-    } catch (err) {
-      this.logger.warn('Fallo al obtener RDAP para IP:', err);
-    }
-
-    if (netName) {
-      tags.push({ label: `Red: ${netName}`, type: 'info' });
-    }
-
-    const riskProfile = {
-      entityName: ip,
-      entityTypeLabel: 'DIRECCIÓN IP / HOST',
-      tags,
-      country,
-      riskScore: Math.min(riskScore, 100),
-      lat,
-      lon,
-      isp
-    };
-
-    const digitalFootprint = [
-      {
-        id: 'ip-1',
-        domain: ip,
-        status: 'Activo' as const,
-        registrationDate: 'N/A (Dirección IP)',
-        link: `https://bgp.he.net/ip/${ip}`
-      }
-    ];
-
-    if (hostname && hostname !== 'No asignado') {
-      digitalFootprint.push({
-        id: 'ip-2',
-        domain: hostname,
-        status: 'Activo' as const,
-        registrationDate: 'Resolución Inversa',
-        link: `https://${hostname}`
-      });
-    }
-
-    if (ipRange) {
-      digitalFootprint.push({
-        id: 'ip-3',
-        domain: `Rango: ${ipRange}`,
-        status: 'Activo' as const,
-        registrationDate: 'Rango de Red RDAP',
-        link: '#'
-      });
-    }
-
-    const relatedEntities = [
-      {
-        id: 'e-ip-1',
-        name: isp.split(' ')[0] || 'Proveedor Red',
-        role: 'PROVEEDOR DE INTERNET / ASN',
-        email: `abuse@${(hostname && hostname.includes('.')) ? hostname.split('.').slice(-2).join('.') : 'abuse-net.org'}`,
-        avatarSeed: isp
-      }
-    ];
-
-    if (org && org !== isp) {
-      relatedEntities.push({
-        id: 'e-ip-2',
-        name: org,
-        role: 'ORGANIZACIÓN REGISTRADA',
-        email: `admin@${ip.replace(/\./g, '-')}.local`,
-        avatarSeed: org
-      });
+    // Verificar OFAC por IP (raro pero posible)
+    const ofacMatches = this.ofacService.search(ip);
+    if (ofacMatches.length > 0) {
+      riskScore = Math.min(100, riskScore + 30);
+      tags.push({ label: 'Posible Vínculo OFAC', type: 'danger' });
     }
 
     return {
-      riskProfile,
-      digitalFootprint,
-      relatedEntities,
-      digitalAssets: [],
-      ofacAlertsCount: riskScore > 50 ? 1 : 0
-    };
-  }
-
-  private async handleCryptoScan(address: string) {
-    const isEth = ETH_ADDRESS_REGEX.test(address);
-    const network = isEth ? 'ETHEREUM (ERC-20)' : 'BITCOIN MAINNET';
-    let balance = '0.00 ' + (isEth ? 'ETH' : 'BTC');
-    const explorerLink = isEth
-      ? `https://etherscan.io/address/${address}`
-      : `https://blockstream.info/address/${address}`;
-
-    const tags: { label: string; type: 'success' | 'danger' | 'warning' | 'info' }[] = [
-      { label: 'Blockchain', type: 'info' },
-      { label: isEth ? 'Ethereum' : 'Bitcoin', type: 'info' }
-    ];
-
-    let riskScore = 10;
-    let ofacAlertsCount = 0;
-    let transactions: { hash: string; value: string; timestamp: string; type: 'IN' | 'OUT' }[] = [];
-
-    try {
-      if (isEth) {
-        const res = await fetch(`https://eth.blockscout.com/api/v2/addresses/${address}`);
-        if (res.ok) {
-          const ethData = await res.json() as { coin_balance?: string };
-          if (ethData && ethData.coin_balance) {
-            const balWei = BigInt(ethData.coin_balance);
-            const balEth = Number(balWei) / 1e18;
-            balance = `${balEth.toFixed(4)} ETH`;
-
-            if (balEth > 50) {
-              tags.push({ label: 'Ballena (Alto Balance)', type: 'warning' });
-              riskScore += 20;
-            }
-          }
-        }
-
-        // Consultar transacciones Ethereum desde Blockscout
-        try {
-          const txRes = await fetch(`https://eth.blockscout.com/api/v2/addresses/${address}/transactions`);
-          if (txRes.ok) {
-            const txData = await txRes.json() as { items?: any[] };
-            if (txData && txData.items) {
-              transactions = txData.items.slice(0, 5).map((item: any) => {
-                const valWei = BigInt(item.value || '0');
-                const valEth = Number(valWei) / 1e18;
-                const isIncoming = item.to?.hash?.toLowerCase() === address.toLowerCase();
-                return {
-                  hash: item.hash.substring(0, 10) + '...' + item.hash.substring(item.hash.length - 6),
-                  value: `${valEth.toFixed(4)} ETH`,
-                  timestamp: item.timestamp,
-                  type: isIncoming ? 'IN' as const : 'OUT' as const
-                };
-              });
-            }
-          }
-        } catch (err) {
-          this.logger.warn(`Error al consultar transacciones ETH para ${address}:`, err);
-        }
-
-      } else {
-        const res = await fetch(`https://blockchain.info/rawaddr/${address}`);
-        if (res.ok) {
-          const btcData = await res.json() as { final_balance?: number; txs?: any[] };
-          if (btcData && btcData.final_balance !== undefined) {
-            const balSatoshi = btcData.final_balance;
-            const balBtc = balSatoshi / 1e8;
-            balance = `${balBtc.toFixed(4)} BTC`;
-
-            if (balBtc > 5) {
-              tags.push({ label: 'Alto Volumen', type: 'warning' });
-              riskScore += 15;
-            }
-
-            if (btcData.txs) {
-              transactions = btcData.txs.slice(0, 5).map((item: any) => {
-                const balBtcTx = (item.result || 0) / 1e8;
-                const isIncoming = balBtcTx >= 0;
-                return {
-                  hash: item.hash.substring(0, 10) + '...' + item.hash.substring(item.hash.length - 6),
-                  value: `${Math.abs(balBtcTx).toFixed(4)} BTC`,
-                  timestamp: new Date((item.time || Date.now() / 1000) * 1000).toISOString(),
-                  type: isIncoming ? 'IN' as const : 'OUT' as const
-                };
-              });
-            }
-          }
-        }
-      }
-    } catch (err) {
-      this.logger.warn(`Error al consultar balance de blockchain para ${address}:`, err);
-      balance = isEth ? '12.45 ETH' : '0.84 BTC';
-      tags.push({ label: 'Datos Estimados', type: 'info' });
-    }
-
-    const hashVal = address.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
-    if (hashVal % 7 === 0) {
-      tags.push({ label: 'Sancionado (OFAC Match)', type: 'danger' });
-      riskScore = 95;
-      ofacAlertsCount = 1;
-    } else {
-      tags.push({ label: 'Sin Sanciones Activas', type: 'success' });
-    }
-
-    const riskProfile = {
-      entityName: `Wallet ${address.slice(0, 6)}...${address.slice(-6)}`,
-      entityTypeLabel: 'ACTIVO DIGITAL / DIRECCIÓN',
-      tags,
-      country: 'Global Blockchain Network',
-      riskScore
-    };
-
-    const digitalAssets = [
-      {
-        id: 'asset-1',
-        network,
-        address,
-        balance,
-        explorerLink,
-        transactions
-      }
-    ];
-
-    return {
-      riskProfile,
+      riskProfile: {
+        entityName: ip,
+        entityTypeLabel: 'DIRECCIÓN IP',
+        tags: tags.length > 0 ? tags : [{ label: 'Sin alertas críticas', type: 'success' }],
+        country,
+        riskScore: Math.min(100, riskScore),
+        lat,
+        lon,
+        isp,
+      },
       digitalFootprint: [],
       relatedEntities: [],
-      digitalAssets,
-      ofacAlertsCount
+      digitalAssets: [],
+      ofacAlertsCount: ofacMatches.length,
+      ofacMatches: ofacMatches.map(m => m.name),
     };
   }
 
-  private async handleDomainScan(domain: string) {
-    const cleanDomain = domain.replace(/^(https?:\/\/)?(www\.)?/, '').split('/')[0];
+  private async scanEthereum(address: string): Promise<ScanPayload> {
+    let balance = '0 ETH';
+    let transactions: DigitalAssetItem['transactions'] = [];
+    let riskScore = 20;
+    const tags: RiskProfile['tags'] = [];
+    
+    // Verificar OFAC
+    const ofacMatches = this.ofacService.search(address);
+    if (ofacMatches.length > 0) {
+      riskScore = 95;
+      tags.push({ label: 'SANCIONADO OFAC', type: 'danger' });
+    }
 
-    let ips: string[] = [];
-    let mxRecords: dns.MxRecord[] = [];
-    let txtRecords: string[][] = [];
-    let isResolving = false;
-
-    try {
-      ips = await dnsPromises.resolve4(cleanDomain);
-      isResolving = true;
-    } catch (err) {
-      this.logger.warn(`Fallo al resolver IPs (A) para ${cleanDomain}:`, err);
+    // Verificar etiqueta de dirección
+    const addressTag = await this.tagsService.getTag(address);
+    if (addressTag) {
+      if (addressTag.category?.includes('Mixer')) {
+        riskScore = Math.min(100, riskScore + 50);
+        tags.push({ label: 'Mixer Detectado', type: 'danger' });
+      }
+      if (addressTag.category?.includes('Sanctioned')) {
+        riskScore = Math.min(100, riskScore + 30);
+        tags.push({ label: 'Dirección Sancionada', type: 'danger' });
+      }
+      if (addressTag.category === 'Exchange') {
+        tags.push({ label: `Exchange: ${addressTag.label}`, type: 'info' });
+        riskScore -= 10;
+      }
     }
 
     try {
-      mxRecords = await dnsPromises.resolveMx(cleanDomain);
-    } catch (err) {
-      this.logger.warn(`Fallo al resolver registros MX para ${cleanDomain}:`, err);
+      const response = await axios.get(
+        `https://eth.blockscout.com/api/v2/addresses/${address}`,
+        { timeout: 10000 }
+      );
+      const data = response.data;
+
+      if (data.coin_balance) {
+        const ethBalance = parseFloat(data.coin_balance) / 1e18;
+        balance = `${ethBalance.toFixed(6)} ETH`;
+
+        if (ethBalance > 1000) {
+          riskScore += 20;
+          tags.push({ label: 'Balance Muy Alto', type: 'warning' });
+        } else if (ethBalance > 50) {
+          riskScore += 10;
+          tags.push({ label: 'Balance Elevado', type: 'warning' });
+        }
+      }
+
+      if (data.transactions_count && data.transactions_count > 0) {
+        try {
+          const txResponse = await axios.get(
+            `https://eth.blockscout.com/api/v2/addresses/${address}/transactions?limit=5`,
+            { timeout: 10000 }
+          );
+          const txData = txResponse.data;
+
+          if (txData.items) {
+            transactions = txData.items.map((tx: Record<string, unknown>) => ({
+              hash: tx.hash as string,
+              value: `${(parseFloat(tx.value as string) / 1e18).toFixed(6)} ETH`,
+              timestamp: tx.timestamp as string,
+              type: (tx.from as Record<string, string>)?.hash?.toLowerCase() === address.toLowerCase() ? 'OUT' as const : 'IN' as const,
+            }));
+          }
+        } catch (txError: unknown) {
+          this.logger.warn('Error obteniendo transacciones:', (txError as Error).message);
+        }
+      }
+    } catch (error: unknown) {
+      this.logger.warn(`Error consultando Ethereum ${address}:`, (error as Error).message);
+      tags.push({ label: 'Error al consultar blockchain', type: 'warning' });
+    }
+
+    return {
+      riskProfile: {
+        entityName: address,
+        entityTypeLabel: 'DIRECCIÓN ETHEREUM',
+        tags: tags.length > 0 ? tags : [{ label: 'Sin alertas', type: 'success' }],
+        country: 'Blockchain',
+        riskScore: Math.min(100, riskScore),
+      },
+      digitalFootprint: [],
+      relatedEntities: [],
+      digitalAssets: [{
+        id: '1',
+        network: 'ETHEREUM (ERC-20)',
+        address,
+        balance,
+        explorerLink: `https://etherscan.io/address/${address}`,
+        transactions,
+        tag: addressTag?.label,
+        category: addressTag?.category,
+      }],
+      ofacAlertsCount: ofacMatches.length,
+      ofacMatches: ofacMatches.map(m => m.name),
+    };
+  }
+
+  private async scanBitcoin(address: string): Promise<ScanPayload> {
+    let balance = '0 BTC';
+    let transactions: DigitalAssetItem['transactions'] = [];
+    let riskScore = 20;
+    const tags: RiskProfile['tags'] = [];
+    
+    // Verificar OFAC
+    const ofacMatches = this.ofacService.search(address);
+    if (ofacMatches.length > 0) {
+      riskScore = 95;
+      tags.push({ label: 'SANCIONADO OFAC', type: 'danger' });
     }
 
     try {
-      txtRecords = await dnsPromises.resolveTxt(cleanDomain);
-    } catch (err) {
-      this.logger.warn(`Fallo al resolver registros TXT para ${cleanDomain}:`, err);
+      const response = await axios.get(
+        `https://blockchain.info/rawaddr/${address}?limit=5`,
+        { timeout: 10000 }
+      );
+      const data = response.data;
+
+      const btcBalance = (data.final_balance || 0) / 1e8;
+      balance = `${btcBalance.toFixed(8)} BTC`;
+
+      if (btcBalance > 100) {
+        riskScore += 20;
+        tags.push({ label: 'Balance Muy Alto', type: 'warning' });
+      } else if (btcBalance > 5) {
+        riskScore += 10;
+        tags.push({ label: 'Balance Elevado', type: 'warning' });
+      }
+
+      if (data.txs) {
+        transactions = data.txs.slice(0, 5).map((tx: Record<string, unknown>) => ({
+          hash: tx.hash as string,
+          value: `${(Math.abs(tx.result as number) / 1e8).toFixed(8)} BTC`,
+          timestamp: new Date((tx.time as number) * 1000).toISOString(),
+          type: (tx.result as number) > 0 ? 'IN' as const : 'OUT' as const,
+        }));
+      }
+    } catch (error: unknown) {
+      this.logger.warn(`Error consultando Bitcoin ${address}:`, (error as Error).message);
+      tags.push({ label: 'Error al consultar blockchain', type: 'warning' });
     }
 
+    return {
+      riskProfile: {
+        entityName: address,
+        entityTypeLabel: 'DIRECCIÓN BITCOIN',
+        tags: tags.length > 0 ? tags : [{ label: 'Sin alertas', type: 'success' }],
+        country: 'Blockchain',
+        riskScore: Math.min(100, riskScore),
+      },
+      digitalFootprint: [],
+      relatedEntities: [],
+      digitalAssets: [{
+        id: '1',
+        network: 'BITCOIN MAINNET',
+        address,
+        balance,
+        explorerLink: `https://blockchain.info/address/${address}`,
+        transactions,
+      }],
+      ofacAlertsCount: ofacMatches.length,
+      ofacMatches: ofacMatches.map(m => m.name),
+    };
+  }
+
+  private async scanDomain(domain: string): Promise<ScanPayload> {
+    let riskScore = 15;
+    const tags: RiskProfile['tags'] = [];
     let country = 'Desconocido';
     let isp = 'Desconocido';
     let lat: number | undefined;
     let lon: number | undefined;
-    const primaryIp = ips.length > 0 ? ips[0] : '';
+    const footprint: DigitalFootprintItem[] = [];
+    
+    // Verificar OFAC por nombre de dominio
+    const ofacMatches = this.ofacService.search(domain);
 
-    if (primaryIp) {
-      try {
-        const geoResponse = await fetch(`http://ip-api.com/json/${primaryIp}`);
-        if (geoResponse.ok) {
-          const geoData = (await geoResponse.json()) as IpApiResponse;
-          if (geoData.status === 'success') {
-            country = geoData.country || 'Desconocido';
-            isp = geoData.isp || 'Desconocido';
-            lat = geoData.lat;
-            lon = geoData.lon;
-          }
-        }
-      } catch (err) {
-        this.logger.warn('Fallo al geolocalizar IP del dominio:', err);
-      }
+    if (ofacMatches.length > 0) {
+      riskScore += 40;
+      tags.push({ label: 'Dominio Vinculado OFAC', type: 'danger' });
     }
 
-    // Consulta WHOIS real mediante RDAP
-    let registrationDate = 'Desconocido';
-    let registrar = 'Desconocido';
-    let expirationDate = 'Desconocido';
     try {
-      const rdapResponse = await fetch(`https://rdap.org/domain/${cleanDomain}`);
-      if (rdapResponse.ok) {
-        const rdapData = await rdapResponse.json() as any;
-        if (rdapData) {
-          const entities = rdapData.entities || [];
-          const registrarEntity = entities.find((e: any) => e.roles && e.roles.includes('registrar'));
-          if (registrarEntity && registrarEntity.vcardArray && registrarEntity.vcardArray[1]) {
-            const fnItem = registrarEntity.vcardArray[1].find((prop: any) => prop[0] === 'fn');
-            if (fnItem) registrar = fnItem[3];
-          }
+      const [aRecords, mxRecords, txtRecords] = await Promise.allSettled([
+        dns.resolve4(domain),
+        dns.resolveMx(domain),
+        dns.resolveTxt(domain),
+      ]);
 
-          const events = rdapData.events || [];
-          const regEvent = events.find((e: any) => e.eventAction === 'registration');
-          if (regEvent) {
-            registrationDate = new Date(regEvent.eventDate).toLocaleDateString('es-ES');
+      if (aRecords.status === 'fulfilled' && aRecords.value.length > 0) {
+        const ip = aRecords.value[0];
+
+        try {
+          const geoResponse = await axios.get(
+            `http://ip-api.com/json/${ip}?fields=status,country,countryCode,lat,lon,isp,hosting,proxy`,
+            { timeout: 5000 }
+          );
+          if (geoResponse.data.status === 'success') {
+            country = geoResponse.data.country;
+            isp = geoResponse.data.isp;
+            lat = geoResponse.data.lat;
+            lon = geoResponse.data.lon;
+
+            if (geoResponse.data.hosting) {
+  // Solo sumar riesgo si NO es un proveedor conocido y seguro
+  const safeProviders = ['Google LLC', 'Google', 'Cloudflare', 'Amazon', 'AWS', 'Microsoft Corporation', 'Microsoft'];
+  const isp = (geoResponse.data.isp || '').toLowerCase();
+  const isSafeProvider = safeProviders.some(p => isp.includes(p.toLowerCase()));
+  
+  if (!isSafeProvider) {
+    riskScore += 15;
+    tags.push({ label: 'Hosting Cloud Desconocido', type: 'warning' });
+  } else {
+    tags.push({ label: 'Hosting Cloud (Proveedor Seguro)', type: 'info' });
+  }
+}
           }
-          const expEvent = events.find((e: any) => e.eventAction === 'expiration');
-          if (expEvent) {
-            expirationDate = new Date(expEvent.eventDate).toLocaleDateString('es-ES');
-          }
+        } catch (error: unknown) {
+          this.logger.warn(`Error geolocalizando IP para ${domain}:`, (error as Error).message);
         }
-      }
-    } catch (err) {
-      this.logger.warn(`Error al consultar RDAP para ${cleanDomain}:`, err);
-    }
 
-    let riskScore = 15;
-    const tags: { label: string; type: 'success' | 'danger' | 'warning' | 'info' }[] = [
-      { label: isResolving ? 'Dominio Activo' : 'Host Inactivo', type: isResolving ? 'success' : 'danger' }
-    ];
-
-    if (!isResolving) {
-      riskScore = 80;
-      tags.push({ label: 'Resolución Fallida', type: 'danger' });
-    } else {
-      if (mxRecords.length === 0) {
-        tags.push({ label: 'Sin Servidor de Correo (MX)', type: 'warning' });
+        footprint.push({
+          id: 'dns-a',
+          domain: `${domain} → ${ip}`,
+          status: 'Activo',
+          registrationDate: 'Resolución DNS',
+          link: '#',
+        });
+      } else {
         riskScore += 20;
+        tags.push({ label: 'Sin resolución DNS', type: 'danger' });
+      }
+
+      if (mxRecords.status === 'fulfilled' && mxRecords.value.length > 0) {
+        footprint.push({
+          id: 'dns-mx',
+          domain: `MX: ${mxRecords.value.map((r: { exchange: string }) => r.exchange).join(', ')}`,
+          status: 'Activo',
+          registrationDate: 'Configuración de correo',
+          link: '#',
+        });
       } else {
-        tags.push({ label: 'Email Configurado', type: 'success' });
+        riskScore += 10;
+        tags.push({ label: 'Sin registros MX', type: 'warning' });
       }
 
-      let hasSpf = false;
-      for (const record of txtRecords) {
-        const recordStr = record.join(' ');
-        if (recordStr.includes('v=spf1')) {
-          hasSpf = true;
-          break;
+      if (txtRecords.status === 'fulfilled' && txtRecords.value.length > 0) {
+        const txtStrings = txtRecords.value.map((r: string[]) => r.join(''));
+        const hasSPF = txtStrings.some((t: string) => t.includes('v=spf1'));
+        const hasDMARC = txtStrings.some((t: string) => t.includes('v=DMARC1'));
+
+        if (!hasSPF) {
+          riskScore += 10;
+          tags.push({ label: 'Sin SPF', type: 'warning' });
         }
-      }
+        if (!hasDMARC) {
+          riskScore += 5;
+          tags.push({ label: 'Sin DMARC', type: 'info' });
+        }
 
-      if (!hasSpf) {
-        tags.push({ label: 'Sin SPF (Riesgo Spoofing)', type: 'warning' });
+        footprint.push({
+          id: 'dns-txt',
+          domain: `TXT: ${hasSPF ? 'SPF ✓' : 'SPF ✗'} | ${hasDMARC ? 'DMARC ✓' : 'DMARC ✗'}`,
+          status: 'Activo',
+          registrationDate: 'Configuración de seguridad',
+          link: '#',
+        });
+      } else {
         riskScore += 15;
-      } else {
-        tags.push({ label: 'Filtro SPF Activo', type: 'success' });
+        tags.push({ label: 'Sin registros TXT', type: 'warning' });
       }
 
-      const ispLower = isp.toLowerCase();
-      if (ispLower.includes('yandex') || ispLower.includes('alibaba') || country === 'Russia' || country === 'China') {
-        tags.push({ label: 'Jurisdicción de Alto Riesgo', type: 'warning' });
-        riskScore += 25;
-      }
+    } catch (error: unknown) {
+      this.logger.warn(`Error DNS para ${domain}:`, (error as Error).message);
+      tags.push({ label: 'Error en resolución DNS', type: 'warning' });
     }
 
-    const riskProfile = {
-      entityName: cleanDomain,
-      entityTypeLabel: 'DOMINIO / HOST',
-      tags,
-      country: isResolving ? country : 'N/A',
-      riskScore: Math.min(riskScore, 100),
-      lat,
-      lon,
-      isp
-    };
-
-    const digitalFootprint: Record<string, unknown>[] = [];
-
-    if (isResolving) {
-      // Agregar información WHOIS extraída si está disponible
-      if (registrar !== 'Desconocido') {
-        digitalFootprint.push({
-          id: `dom-whois-reg`,
-          domain: `Registrador: ${registrar}`,
-          status: 'Activo',
-          registrationDate: `Creación: ${registrationDate}`,
-          link: '#'
-        });
-      }
-      if (expirationDate !== 'Desconocido') {
-        digitalFootprint.push({
-          id: `dom-whois-exp`,
-          domain: `Expiración de Dominio`,
-          status: 'Activo',
-          registrationDate: `Expiración: ${expirationDate}`,
-          link: '#'
-        });
-      }
-
-      ips.forEach((ip, index) => {
-        digitalFootprint.push({
-          id: `dom-a-${index}`,
-          domain: `IP: ${ip} (Registro A)`,
-          status: 'Activo',
-          registrationDate: 'Resolución de Red',
-          link: `https://bgp.he.net/ip/${ip}`
-        });
-      });
-
-      mxRecords.forEach((mx, index) => {
-        digitalFootprint.push({
-          id: `dom-mx-${index}`,
-          domain: `${mx.exchange} (Prioridad ${mx.priority})`,
-          status: 'Activo',
-          registrationDate: 'Registro MX',
-          link: '#'
-        });
-      });
-
-      txtRecords.slice(0, 3).forEach((txt, index) => {
-        const textVal = txt.join(' ');
-        digitalFootprint.push({
-          id: `dom-txt-${index}`,
-          domain: textVal.length > 40 ? textVal.substring(0, 40) + '...' : textVal,
-          status: 'Activo',
-          registrationDate: 'Registro TXT',
-          link: '#'
-        });
-      });
-    } else {
-      digitalFootprint.push({
-        id: 'dom-inactive',
-        domain: cleanDomain,
-        status: 'Inactivo',
-        registrationDate: 'No resuelve DNS',
-        link: '#'
-      });
-    }
-
-    const relatedEntities: Record<string, unknown>[] = [];
-    if (isResolving) {
-      relatedEntities.push(
-        {
-          id: 'e-dom-1',
-          name: 'Administrador Host',
-          role: 'CONTACTO TÉCNICO',
-          email: `hostmaster@${cleanDomain}`,
-          avatarSeed: `hostmaster-${cleanDomain}`
-        },
-        {
-          id: 'e-dom-2',
-          name: 'Reporte de Abuso',
-          role: 'CONTACTO LEGAL',
-          email: `abuse@${cleanDomain}`,
-          avatarSeed: `abuse-${cleanDomain}`
-        }
+    try {
+      const rdapResponse = await axios.get(
+        `https://rdap.org/domain/${encodeURIComponent(domain)}`,
+        { timeout: 8000 }
       );
-    }
+      const rdapData = rdapResponse.data;
 
-    const digitalAssets: Record<string, unknown>[] = [];
+      if (rdapData.events) {
+        const registration = rdapData.events.find((e: { eventAction: string }) => e.eventAction === 'registration');
+        const expiration = rdapData.events.find((e: { eventAction: string }) => e.eventAction === 'expiration');
 
-    txtRecords.forEach((txt) => {
-      const textVal = txt.join(' ');
-      const ethMatch = textVal.match(/0x[a-fA-F0-9]{40}/);
-      if (ethMatch) {
-        digitalAssets.push({
-          id: 'dom-asset-eth',
-          network: 'ETHEREUM (ERC-20)',
-          address: ethMatch[0],
-          balance: '0.00 ETH (Detectado en TXT)',
-          explorerLink: `https://etherscan.io/address/${ethMatch[0]}`
-        });
+        if (registration) {
+          footprint.push({
+            id: 'whois-reg',
+            domain: `Registrado: ${new Date(registration.eventDate).toLocaleDateString()}`,
+            status: 'Activo',
+            registrationDate: registration.eventDate,
+            link: '#',
+          });
+        }
+
+        if (expiration) {
+          const daysUntilExpiry = Math.ceil((new Date(expiration.eventDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+          if (daysUntilExpiry < 30) {
+            riskScore += 10;
+            tags.push({ label: `Expira en ${daysUntilExpiry} días`, type: 'warning' });
+          }
+        }
       }
-    });
-
-    if (cleanDomain.includes('fintech') || cleanDomain.includes('solutions')) {
-      digitalAssets.push({
-        id: 'dom-asset-btc',
-        network: 'BITCOIN MAINNET',
-        address: 'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh',
-        balance: '12.42 BTC',
-        explorerLink: 'https://blockstream.info/address/bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh'
-      });
+    } catch {
+      tags.push({ label: 'WHOIS no disponible', type: 'info' });
     }
 
     return {
-      riskProfile,
-      digitalFootprint,
-      relatedEntities,
-      digitalAssets,
-      ofacAlertsCount: riskScore > 65 ? 1 : 0
+      riskProfile: {
+        entityName: domain,
+        entityTypeLabel: 'DOMINIO/HOST',
+        tags: tags.length > 0 ? tags : [{ label: 'Sin alertas críticas', type: 'success' }],
+        country,
+        riskScore: Math.min(100, riskScore),
+        lat,
+        lon,
+        isp,
+      },
+      digitalFootprint: footprint,
+      relatedEntities: [],
+      digitalAssets: [],
+      ofacAlertsCount: ofacMatches.length,
+      ofacMatches: ofacMatches.map(m => m.name),
     };
   }
 }

@@ -1,126 +1,100 @@
-import { 
-  Controller, 
-  Get, 
-  Post, 
-  Put, 
-  Delete, 
-  Body, 
-  Param, 
-  Req, 
-  UseGuards, 
-  BadRequestException, 
-  NotFoundException,
-  Inject
-} from '@nestjs/common';
-import { DatabaseService } from '../database/database.service';
-import { StrictAuthGuard } from '../auth/auth.guard';
-import { Request } from 'express';
+import { Controller, Get, Post, Put, Delete, Body, Param, Request, UseGuards } from '@nestjs/common';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { PrismaService } from '../database/prisma.service';
 
-interface RequestWithUser extends Request {
-  user: {
-    userId: string;
-    username: string;
-  };
-}
-
-interface CreateCaseDto {
-  entityName: string;
-  entityTypeLabel: string;
-  riskScore?: number;
-  notes?: string;
-  data?: unknown;
-}
-
-interface UpdateCaseDto {
-  status?: 'En revisión' | 'Sospechoso' | 'Cerrado' | 'Seguro';
-  notes?: string;
-}
-
-@Controller()
-@UseGuards(StrictAuthGuard) // Todo este controlador requiere autenticación estricta
+@Controller('cases')
+@UseGuards(JwtAuthGuard)
 export class CasesController {
-  constructor(@Inject(DatabaseService) private readonly dbService: DatabaseService) {}
+  constructor(private readonly prisma: PrismaService) {}
 
-  /**
-   * GET /api/cases
-   */
-  @Get('cases')
-  async getCases(@Req() req: RequestWithUser) {
-    const userId = req.user.userId;
-    return this.dbService.getCasesByUserId(userId);
+  @Get()
+  async getCases(@Request() req: { user: { id: string } }) {
+    return this.prisma.case.findMany({
+      where: { userId: req.user.id },
+      orderBy: { updatedAt: 'desc' },
+    });
   }
 
-  /**
-   * POST /api/cases
-   */
-  @Post('cases')
-  async createCase(@Body() body: CreateCaseDto, @Req() req: RequestWithUser) {
-    const userId = req.user.userId;
-    const { entityName, entityTypeLabel, riskScore, notes, data } = body;
+  @Post()
+  async createCase(
+    @Request() req: { user: { id: string } },
+    @Body() body: {
+      entityName: string;
+      entityTypeLabel: string;
+      riskScore: number;
+      notes?: string;
+      data: unknown;
+    },
+  ) {
+    const existing = await this.prisma.case.findUnique({
+      where: {
+        userId_entityName: {
+          userId: req.user.id,
+          entityName: body.entityName,
+        },
+      },
+    });
 
-    if (!entityName || !entityTypeLabel) {
-      throw new BadRequestException('Nombre y tipo de entidad son obligatorios');
+    if (existing) {
+      return this.prisma.case.update({
+        where: { id: existing.id },
+        data: {
+          riskScore: body.riskScore,
+          notes: body.notes || existing.notes,
+          data: JSON.stringify(body.data),
+          updatedAt: new Date(),
+        },
+      });
     }
 
-    const newCase = this.dbService.addCase(
-      userId,
-      entityName,
-      entityTypeLabel,
-      Number(riskScore) || 0,
-      notes || '',
-      data
-    );
-
-    return {
-      message: 'Caso guardado con éxito',
-      case: newCase
-    };
+    return this.prisma.case.create({
+      data: {
+        userId: req.user.id,
+        entityName: body.entityName,
+        entityTypeLabel: body.entityTypeLabel,
+        riskScore: body.riskScore,
+        notes: body.notes || '',
+        data: JSON.stringify(body.data),
+      },
+    });
   }
 
-  /**
-   * PUT /api/cases/:id
-   */
-  @Put('cases/:id')
-  async updateCase(@Param('id') id: string, @Body() body: UpdateCaseDto, @Req() req: RequestWithUser) {
-    const userId = req.user.userId;
-    const { status, notes } = body;
-
-    const validStatuses = ['En revisión', 'Sospechoso', 'Cerrado', 'Seguro'];
-    if (status && !validStatuses.includes(status)) {
-      throw new BadRequestException('Estado de caso no válido');
-    }
-
-    const updatedCase = this.dbService.updateCase(userId, id, { status, notes });
-    if (!updatedCase) {
-      throw new NotFoundException('Caso no encontrado o no pertenece a este usuario');
-    }
-
-    return {
-      message: 'Caso actualizado con éxito',
-      case: updatedCase
-    };
+  @Put(':id')
+  async updateCase(
+    @Request() req: { user: { id: string } },
+    @Param('id') id: string,
+    @Body() body: { status?: string; notes?: string },
+  ) {
+    return this.prisma.case.update({
+      where: { id, userId: req.user.id },
+      data: {
+        ...body,
+        updatedAt: new Date(),
+      },
+    });
   }
 
-  /**
-   * DELETE /api/cases/:id
-   */
-  @Delete('cases/:id')
-  async deleteCase(@Param('id') id: string, @Req() req: RequestWithUser) {
-    const userId = req.user.userId;
-    const success = this.dbService.deleteCase(userId, id);
-    if (!success) {
-      throw new NotFoundException('Caso no encontrado o no pertenece a este usuario');
-    }
-
-    return { message: 'Caso eliminado con éxito' };
+  @Delete(':id')
+  async deleteCase(@Request() req: { user: { id: string } }, @Param('id') id: string) {
+    await this.prisma.case.delete({
+      where: { id, userId: req.user.id },
+    });
+    return { message: 'Caso eliminado' };
   }
+}
 
-  /**
-   * GET /api/history
-   */
-  @Get('history')
-  async getHistory(@Req() req: RequestWithUser) {
-    const userId = req.user.userId;
-    return this.dbService.getScansByUserId(userId);
+// Historial endpoint
+@Controller('history')
+@UseGuards(JwtAuthGuard)
+export class HistoryController {
+  constructor(private readonly prisma: PrismaService) {}
+
+  @Get()
+  async getHistory(@Request() req: { user: { id: string } }) {
+    return this.prisma.scan.findMany({
+      where: { userId: req.user.id },
+      orderBy: { timestamp: 'desc' },
+      take: 50,
+    });
   }
 }

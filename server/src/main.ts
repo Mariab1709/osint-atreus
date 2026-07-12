@@ -1,24 +1,27 @@
-import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { Logger } from '@nestjs/common';
+import { ValidationPipe } from '@nestjs/common';
 
 async function bootstrap() {
-  const logger = new Logger('Bootstrap');
   const app = await NestFactory.create(AppModule);
-  const PORT = process.env.PORT || 3001;
 
-  // Habilitar prefijo global /api para que coincida con las llamadas del frontend
-  app.setGlobalPrefix('api');
-
-  // Configurar CORS
   app.enableCors({
-    origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
-    credentials: true
+    origin: process.env.NODE_ENV === 'production'
+      ? ['https://tu-dominio.com']
+      : true, // true = acepta cualquier origen en desarrollo
+    credentials: true,
   });
 
-  await app.listen(PORT);
-  logger.log(`🚀 Servidor OSINT Astraeus (NestJS) corriendo en http://localhost:${PORT}`);
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  app.setGlobalPrefix('api');
+
+  const port = process.env.PORT || 3001;
+  
+  // Escuchar en todas las interfaces (0.0.0.0) para que funcione en Windows
+  await app.listen(port, '0.0.0.0');
+  
+  console.log(`🚀 Servidor corriendo en http://localhost:${port}`);
+  console.log(`🚀 También accesible en http://127.0.0.1:${port}`);
 }
 
 bootstrap();
