@@ -149,6 +149,7 @@ export default function AstraeusDashboard({
 }: AstraeusDashboardProps) {
 
   // Estados de navegación e interacción
+  const API_URL = import.meta.env.VITE_API_URL || 'https://osint-atreus.onrender.com';
   const [activeTab, setActiveTab] = useState<'escaner' | 'casos' | 'historial' | 'api'>('escaner');
   const [searchQuery, setSearchQuery] = useState('');
   const [isScanning, setIsScanning] = useState(false);
@@ -183,7 +184,7 @@ export default function AstraeusDashboard({
   // --- Efecto de carga inicial de sesión ---
   useEffect(() => {
     if (token) {
-      fetch('/api/auth/me', {
+      fetch(`${API_URL}/api/auth/me`, {
         headers: { 'Authorization': `Bearer ${token}` }
       })
       .then(res => {
@@ -207,7 +208,7 @@ export default function AstraeusDashboard({
     if (!token) return;
     setCasesLoading(true);
     try {
-      const res = await fetch('/api/cases', {
+      const res = await fetch(`${API_URL}/api/cases`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -225,7 +226,7 @@ export default function AstraeusDashboard({
     if (!token) return;
     setHistoryLoading(true);
     try {
-      const res = await fetch('/api/history', {
+      const res = await fetch(`${API_URL}/api/history`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -261,7 +262,7 @@ export default function AstraeusDashboard({
         ofacAlertsCount
       };
 
-      const res = await fetch('/api/cases', {
+      const res = await fetch(`${API_URL}/api/cases`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -298,7 +299,7 @@ export default function AstraeusDashboard({
   const handleUpdateCaseStatus = async (caseId: string, newStatus: string) => {
     if (!token) return;
     try {
-      const res = await fetch(`/api/cases/${caseId}`, {
+      const res = await fetch(`${API_URL}/api/cases/${caseId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -317,7 +318,7 @@ export default function AstraeusDashboard({
   const handleSaveInlineNotes = async (caseId: string, notes: string) => {
     if (!token) return;
     try {
-      const res = await fetch(`/api/cases/${caseId}`, {
+      const res = await fetch(`${API_URL}/api/cases/${caseId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -337,7 +338,7 @@ export default function AstraeusDashboard({
     if (!token) return;
     if (!confirm('¿Estás seguro de que deseas eliminar este caso?')) return;
     try {
-      const res = await fetch(`/api/cases/${caseId}`, {
+      const res = await fetch(`${API_URL}/api/cases/${caseId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -370,7 +371,7 @@ export default function AstraeusDashboard({
     setAuthLoading(true);
     setAuthError('');
 
-    const endpoint = mode === 'login' ? '/api/auth/login' : '/api/auth/register';
+    const endpoint = mode === 'login' ? `${API_URL}/api/auth/login` : `${API_URL}/api/auth/register`;
 
     try {
       const res = await fetch(endpoint, {
@@ -422,7 +423,7 @@ export default function AstraeusDashboard({
         headers['Authorization'] = `Bearer ${token}`;
       }
 
-      const response = await fetch(`/api/scan?query=${encodeURIComponent(searchQuery)}`, { headers });
+      const response = await fetch(`${API_URL}/api/scan?query=${encodeURIComponent(searchQuery)}`, { headers });
       if (!response.ok) {
         throw new Error('API server returned error status');
       }
