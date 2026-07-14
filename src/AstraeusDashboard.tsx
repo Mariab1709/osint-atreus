@@ -149,7 +149,7 @@ export default function AstraeusDashboard({
 }: AstraeusDashboardProps) {
 
   // Estados de navegación e interacción
-  const API_URL = import.meta.env.VITE_API_URL || '';
+  const API_URL = import.meta.env.VITE_API_URL || 'https://osint-atreus.onrender.com';
   const [activeTab, setActiveTab] = useState<'escaner' | 'casos' | 'historial' | 'api'>('escaner');
   const [searchQuery, setSearchQuery] = useState('');
   const [isScanning, setIsScanning] = useState(false);
