@@ -54,5 +54,8 @@ server/build/
 *.js.map
 *.d.ts
 
+# === Reportes internos ===
+REPORTE_MAESTRO.md
+
 # === OS generated ===
 Thumbs.db
