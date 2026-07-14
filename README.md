@@ -32,7 +32,7 @@ turso db create atreus-db
 turso db show atreus-db --url
 turso db show atreus-db --token
 
-## Inicio en Desarrollo Local
+Inicio en Desarrollo Local
 
 1. Instalar dependencias
 
