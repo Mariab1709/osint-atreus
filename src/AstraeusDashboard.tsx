@@ -350,17 +350,18 @@ export default function AstraeusDashboard({
     }
   };
 
-  const handleLoadScanIntoScanner = (scanData: ScanPayload, entityName: string) => {
-    setRiskProfile(scanData.riskProfile);
-    setDigitalFootprint(scanData.digitalFootprint);
-    setRelatedEntities(scanData.relatedEntities);
-    setDigitalAssets(scanData.digitalAssets);
-    setOfacAlertsCount(scanData.ofacAlertsCount);
-    
-    // Cambiar la búsqueda en la barra y redirigir
+  const handleLoadScanIntoScanner = (rawData: ScanPayload | string, entityName: string) => {
+    const parsed = typeof rawData === 'string' ? JSON.parse(rawData) : rawData;
+
+    setRiskProfile(parsed.riskProfile);
+    setDigitalFootprint(parsed.digitalFootprint);
+    setRelatedEntities(parsed.relatedEntities);
+    setDigitalAssets(parsed.digitalAssets);
+    setOfacAlertsCount(parsed.ofacAlertsCount);
+
     setSearchQuery(entityName);
     setActiveTab('escaner');
-    
+
     setToastMessage(`Datos de "${entityName}" cargados con éxito.`);
     setShowNotificationToast(true);
     setTimeout(() => setShowNotificationToast(false), 3000);
