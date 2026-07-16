@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import { Bell, Settings } from 'lucide-react';
+import Toast from './Toast';
 
 interface NavbarProps {
   activeTab: 'escaner' | 'casos' | 'historial' | 'api';
@@ -15,6 +17,15 @@ export default function Navbar({
   handleLogout,
   onOpenAuth
 }: NavbarProps) {
+  const [showToast, setShowToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+
+  const triggerToast = (msg: string) => {
+    setToastMessage(msg);
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 4000);
+  };
+
   return (
     <header className="border-b border-slate-900 bg-[#0A0D15]/80 backdrop-blur-md sticky top-0 z-50 px-4 md:px-8 py-3">
       <div className="max-w-7xl mx-auto flex items-center justify-between">
@@ -60,12 +71,18 @@ export default function Navbar({
             </span>
           </div>
 
-          <button className="text-slate-400 hover:text-white transition-colors relative p-1.5 hover:bg-slate-900 rounded-md cursor-pointer">
+          <button
+            onClick={() => triggerToast('No tienes nuevas notificaciones')}
+            className="text-slate-400 hover:text-white transition-colors relative p-1.5 hover:bg-slate-900 rounded-md cursor-pointer"
+          >
             <Bell className="w-5 h-5" />
             <span className="absolute top-1 right-1 w-1.5 h-1.5 bg-blue-500 rounded-full"></span>
           </button>
 
-          <button className="text-slate-400 hover:text-white transition-colors p-1.5 hover:bg-slate-900 rounded-md cursor-pointer">
+          <button
+            onClick={() => triggerToast('Panel de configuración en desarrollo')}
+            className="text-slate-400 hover:text-white transition-colors p-1.5 hover:bg-slate-900 rounded-md cursor-pointer"
+          >
             <Settings className="w-5 h-5" />
           </button>
 
@@ -92,6 +109,8 @@ export default function Navbar({
           )}
         </div>
       </div>
+
+      <Toast show={showToast} message={toastMessage} />
     </header>
   );
 }
