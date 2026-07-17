@@ -121,6 +121,7 @@ Rewrite Rules: /* → index.html (Vital para que funcione el enrutamiento de Rea
 Variables de entorno requeridas:
 
 VITE_API_URL = https://<tu-backend>.onrender.com (Sin barra / al final).
+
 Nota: A diferencia del proxy local, en producción Vite necesita esta variable para incrustar la dirección del backend al momento de compilar. Si modificas esta variable, debes ejecutar un "Clear build cache & deploy".
 
 ## APIs Externas (sin API key)
