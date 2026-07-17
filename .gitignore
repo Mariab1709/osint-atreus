@@ -57,6 +57,9 @@ server/build/
 # === Reportes internos ===
 REPORTE_MAESTRO.md
 CONTEXTO_ATREUS_V2.md
+DATOS_INSTALACION.md
+DATOS_QA.md
+DATOS_USUARIO.md
 
 # === OS generated ===
 Thumbs.db
