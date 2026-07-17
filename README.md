@@ -32,16 +32,17 @@ turso db create atreus-db
 turso db show atreus-db --url
 turso db show atreus-db --token
 ```
+---
 
 ## Inicio en Desarrollo Local
 
-# 1. Instalar dependencias
+1. Instalar dependencias
 
 ```bash
 npm install
 ```
 
-# 2. Configurar variables de entorno (Backend)
+2. Configurar variables de entorno (Backend)
 
 Copia o edita el archivo .env ubicado en la raíz o en la carpeta del servidor con los valores de tu base de datos Turso
 
@@ -51,21 +52,21 @@ TURSO_AUTH_TOKEN=eyJ...
 JWT_SECRET=un_secreto_largo_y_seguro
 ```
 
-# 3. Inicializar la base de datos
+3. Inicializar la base de datos
 Genera el cliente de Prisma (las tablas ya están alojadas y sincronizadas en Turso):
 
 ```bash
 npx prisma generate
 ```
 
-# 4. Iniciar backend (Terminal 1)
+4. Iniciar backend (Terminal 1)
 
 ```bash
 npm run server
 # Backend en http://localhost:3001
 ```
 
-# 5. Iniciar frontend (Terminal 2)
+5. Iniciar frontend (Terminal 2)
 
 ```bash
 npm run dev
@@ -73,6 +74,8 @@ npm run dev
 ```
 
 Nota para entorno local: El proxy de Vite redirige /api/* al backend automáticamente, por lo que no es necesario configurar la URL del backend durante el desarrollo local.
+
+---
 
 ## Scripts
 
@@ -84,10 +87,12 @@ Nota para entorno local: El proxy de Vite redirige /api/* al backend automática
 | npm run lint | ESLint sobre todo el código |
 | npm run preview | Previsualiza build de producción |
 
+---
+
 ## Despliegue en Render.com (Producción)
 El proyecto utiliza una arquitectura desacoplada, requiriendo dos servicios distintos en Render para optimizar recursos y seguridad.
 
-# 1. Backend (Web Service)
+1. Backend (Web Service)
 
 Build Command: npm install && npx prisma generate && npx prisma migrate deploy && npm run build
 
@@ -105,7 +110,8 @@ NODE_ENV=production
 
 Seguridad (CORS): El archivo main.ts de NestJS debe tener configurado el origen del frontend para permitir las peticiones (CORS habilitado).
 
-# 2. Frontend (Static Site)
+2. Frontend (Static Site)
+
 Build Command: npm run build
 
 Publish Directory: dist
@@ -120,7 +126,7 @@ Nota: A diferencia del proxy local, en producción Vite necesita esta variable p
 ## APIs Externas (sin API key)
 
 | Servicio | Uso |
-|---------=|----=|
+|----------|-----|
 | ip-api.com | Geolocalización de IPs |
 | rdap.org | Consultas WHOIS/RDAP de dominios |
 | blockchain.info | Datos de direcciones Bitcoin |
